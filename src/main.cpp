@@ -37,6 +37,15 @@ const char* WAV_NAMES[NUM_BIRDS] = {
 
 const char* CAL_FILE = "BASELINE.CAL";
 
+// ── Channel mapping ───────────────────────────────────────────
+// Maps Trill channel index → bird index (0-12), or -1 to ignore
+const int TRILL_CHANNELS = 30;
+const int CHANNEL_MAP[TRILL_CHANNELS] = {
+   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, // channels 0-11  → birds 0-11
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // channels 12-23 → unused
+  -1, -1, -1, -1, -1, 12                            // channels 24-28 unused, 29 → bird 12
+};
+
 // ── State ─────────────────────────────────────────────────────
 uint16_t baseline[NUM_BIRDS]      = {0};
 uint16_t touchThreshold[NUM_BIRDS] = {0};
@@ -91,11 +100,16 @@ void calibrate() {
     }
 
     trill.requestRawData();
+    uint16_t calRaw[TRILL_CHANNELS] = {0};
     int ch = 0;
-    while (trill.rawDataAvailable() > 0 && ch < NUM_BIRDS) {
-      accumulator[ch] += trill.rawDataRead();
-      counts[ch]++;
-      ch++;
+    while (trill.rawDataAvailable() > 0 && ch < TRILL_CHANNELS) {
+      calRaw[ch++] = trill.rawDataRead();
+    }
+    for (int i = 0; i < TRILL_CHANNELS; i++) {
+      int bird = CHANNEL_MAP[i];
+      if (bird < 0) continue;
+      accumulator[bird] += calRaw[i];
+      counts[bird]++;
     }
     delay(CAL_DURATION_MS / CAL_SAMPLES);
   }
@@ -225,25 +239,28 @@ void loop() {
   // ── Read Trill ──────────────────────────────────────────────
   trill.requestRawData();
 
-  uint16_t raw[NUM_BIRDS] = {0};
+  uint16_t raw[TRILL_CHANNELS] = {0};
   int ch = 0;
-  while (trill.rawDataAvailable() > 0 && ch < NUM_BIRDS) {
+  while (trill.rawDataAvailable() > 0 && ch < TRILL_CHANNELS) {
     raw[ch++] = trill.rawDataRead();
   }
 
   // ── Touch detection — edge on crossing threshold ─────────────
   int triggeredBird = -1;
-  for (int i = 0; i < NUM_BIRDS; i++) {
-    bool above = (raw[i] > touchThreshold[i]);
+  for (int i = 0; i < TRILL_CHANNELS; i++) {
+    int bird = CHANNEL_MAP[i];
+    if (bird < 0) continue; // unused channel
 
-    if (above && !wasAboveThreshold[i]) {
+    bool above = (raw[i] > touchThreshold[bird]);
+
+    if (above && !wasAboveThreshold[bird]) {
       // Rising edge — check debounce
-      if (now - lastTriggerTime[i] >= DEBOUNCE_MS) {
-        triggeredBird       = i;        // last one wins if multiple
-        lastTriggerTime[i]  = now;
+      if (now - lastTriggerTime[bird] >= DEBOUNCE_MS) {
+        triggeredBird          = bird; // last one wins if multiple
+        lastTriggerTime[bird]  = now;
       }
     }
-    wasAboveThreshold[i] = above;
+    wasAboveThreshold[bird] = above;
   }
 
   if (triggeredBird >= 0) {
